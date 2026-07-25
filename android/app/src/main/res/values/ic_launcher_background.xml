@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Цвет подложки adaptive icon. Иконка «classic_charcoal» сама по
+         себе тёмная с белым кругом внутри, так что подложка — тёмная,
+         идентичная цвету самой иконки (#161618). На любом launcher
+         (квадратный / круглый / squircle / teardrop mask) иконка
+         выглядит как единое целое. -->
+    <color name="ic_launcher_background">#161618</color>
+</resources>

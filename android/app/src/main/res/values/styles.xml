@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Светлая тема, Android < 12 (нет SplashScreen API). Здесь сплэш
+        реализуется через windowBackground LaunchTheme, который виден
+        ровно ОТ старта процесса до первого кадра Flutter.
+
+        windowBackground = @color/ic_launcher_background (#161618) —
+        тот же цвет, что фон launcher-иконки. На старых устройствах
+        (где launcher не делает «раскрытия» с эффектом иконки) это
+        выглядит как плавное появление тёмно-серого экрана, на котором
+        потом Flutter рисует свой UI. Никаких отдельных иконок на сплэше
+        для Android < 12 не рисуем — они только породили бы тот же эффект
+        «двух иконок», от которого мы избавляемся.
+    -->
+    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">#F2F2F7</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:windowTranslucentStatus">false</item>
+        <item name="android:windowTranslucentNavigation">false</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">?android:colorBackground</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:windowTranslucentStatus">false</item>
+        <item name="android:windowTranslucentNavigation">false</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

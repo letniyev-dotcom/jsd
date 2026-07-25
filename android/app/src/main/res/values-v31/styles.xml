@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Светлая тема, Android 12+ (API 31). Фон сплэша = фон светлой темы
+        (#F2F2F7 = AppColors.bgLight) — Flutter UI открывается на том же
+        цвете, никакой «смены полотна». Иконка — статичный vector «GitHub
+        кот» цвета акцента (#9885E2), 1:1 как Iconify('mdi:github') в
+        onboarding (см. lib/screens/splash.dart).
+        Launcher foreground переделан в «плоский белый/тёмный кот без
+        белого круга» (см. drawable/ic_launcher_foreground.xml) — теперь
+        launcher → splash → Flutter UI выглядят как одна и та же иконка.
+    -->
+    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">#F2F2F7</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:windowTranslucentStatus">false</item>
+        <item name="android:windowTranslucentNavigation">false</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowSplashScreenBackground">#F2F2F7</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon</item>
+        <!-- Длительность нашей AVD-анимации (см. drawable/splash_icon.xml):
+             scale 0.85→1.0 за 650ms + alpha 0→1 за 450ms. Сообщаем системе,
+             что иконка анимируется 650ms, чтобы SplashScreen API не
+             свернул сплэш до окончания плавного появления иконки. -->
+        <item name="android:windowSplashScreenAnimationDuration">650</item>
+    </style>
+    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">?android:colorBackground</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:windowTranslucentStatus">false</item>
+        <item name="android:windowTranslucentNavigation">false</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

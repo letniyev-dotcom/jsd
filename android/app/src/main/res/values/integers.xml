@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Сейчас файл пуст: splash_screen_duration был убран вместе с
+         кастомной scale-анимацией на splash_icon (см. комментарий в
+         drawable/splash_icon.xml). Файл оставлен на случай, если
+         в будущем понадобятся integer-ресурсы. -->
+</resources>
