@@ -171,8 +171,14 @@ class _RootState extends State<_Root> {
       // практически везде ходим через свой SlideRoute, но если где-то
       // сработает дефолтный path — лучше короткий fade без scale/elevation,
       // он рисуется одним cheap-проходом.
-      pageTransitionsTheme: const PageTransitionsTheme(builders: {
-        TargetPlatform.android: _FastFadeTransitionsBuilder(),
+      //
+      // Без `const`: на Flutter 3.44.x конструктор
+      // CupertinoPageTransitionsBuilder() перестал быть constant
+      // expression (сборка падала на `kernel_snapshot_program` с "Not a
+      // constant expression"), поэтому весь PageTransitionsTheme больше
+      // нельзя объявлять как const.
+      pageTransitionsTheme: PageTransitionsTheme(builders: {
+        TargetPlatform.android: const _FastFadeTransitionsBuilder(),
         TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
       }),
     );
