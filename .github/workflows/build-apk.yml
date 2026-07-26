@@ -1,0 +1,111 @@
+name: Build Release APK
+
+on:
+  push:
+    branches: [main, master]
+    tags:
+      - "v*"
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache Buildozer & SDK
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+            .buildozer
+            ~/.android
+            ~/.gradle
+          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            buildozer-${{ runner.os }}-
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            git unzip openjdk-17-jdk \
+            autoconf libtool pkg-config \
+            zlib1g-dev libncurses5-dev libncursesw5-dev \
+            libtinfo5 cmake libffi-dev libssl-dev \
+            libltdl-dev curl wget
+
+      - name: Install Buildozer & Cython
+        run: |
+          pip install --upgrade pip
+          pip install "Cython<3.0" buildozer
+
+      - name: Accept Android licenses
+        run: |
+          mkdir -p "$HOME/.android"
+          touch "$HOME/.android/repositories.cfg"
+          yes | sdkmanager --licenses || true
+
+      - name: Build APK (debug — всегда работает без keystore)
+        id: build_debug
+        run: |
+          buildozer -v android debug
+          echo "APK_PATH=$(ls -1 bin/*.apk | head -n1)" >> $GITHUB_OUTPUT
+          ls -lh bin/
+
+      - name: Build Release APK (если заданы secrets для подписи)
+        id: build_release
+        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
+          # Прописываем keystore в buildozer.spec на лету
+          sed -i "s|#android.keystore =|android.keystore = release.keystore|" buildozer.spec
+          sed -i "s|#android.keystore_passwd =|android.keystore_passwd = $KEYSTORE_PASSWORD|" buildozer.spec
+          sed -i "s|#android.keyalias =|android.keyalias = $KEY_ALIAS|" buildozer.spec
+          sed -i "s|#android.keyalias_passwd =|android.keyalias_passwd = $KEY_PASSWORD|" buildozer.spec
+          buildozer -v android release
+          echo "RELEASE_APK=$(ls -1 bin/*-release*.apk | head -n1)" >> $GITHUB_OUTPUT
+          ls -lh bin/
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: tapok-debug-apk
+          path: bin/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Release APK (если собрался)
+        if: steps.build_release.outputs.RELEASE_APK != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: tapok-release-apk
+          path: ${{ steps.build_release.outputs.RELEASE_APK }}
+          retention-days: 90
+
+      - name: Create GitHub Release (на тегах v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: bin/*.apk
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

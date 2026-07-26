@@ -1,0 +1,981 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>тапок — прототип ленты</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    height: 100%;
+    background: #0d0d0d;
+    overscroll-behavior: none;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 24px 0;
+    position: fixed;
+    inset: 0;
+    width: 100%;
+  }
+
+  /* иконки: инлайновые SVG вместо внешнего шрифта — не зависят от сети, не мигают, не лагают */
+  .icon { display: inline-block; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+  .icon.filled { fill: currentColor; stroke: none; }
+
+  .phone {
+    width: 390px;
+    max-width: 100%;
+    height: 800px;
+    max-height: 100%;
+    border-radius: 28px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 0 0 1px #262626;
+    isolation: isolate; /* гарантирует, что overlay всегда перекрывает всё внутри, без просвечивания */
+    background: var(--bg);
+    transition: background-color .25s ease;
+
+    /* тёмная тема — значения по умолчанию */
+    --bg: #000000;
+    --bg-rgb: 0,0,0;
+    --container: #181818;
+    --container-border: rgba(255,255,255,0.08);
+    --text-primary: #ffffff;
+    --text-secondary: rgba(255,255,255,0.55);
+    --text-tertiary: #9a9a9a;
+    --text-body: #dddddd;
+    --divider: rgba(255,255,255,0.08);
+    --outline: rgba(255,255,255,0.3);
+    --nav-bg: rgba(28,28,28,0.92);
+    --nav-border: rgba(255,255,255,0.08);
+    --fab-bg: #ffffff;
+    --fab-icon: #141414;
+    --press-bg: rgba(255,255,255,0.1);
+    --wave-inactive: #444444;
+    --accent: #d85a30;
+    --accent-blue: #378add;
+  }
+  .phone[data-theme="light"] {
+    --bg: #f1f1f3;
+    --bg-rgb: 241,241,243;
+    --container: #ffffff;
+    --container-border: rgba(0,0,0,0.07);
+    --text-primary: #16161a;
+    --text-secondary: rgba(0,0,0,0.55);
+    --text-tertiary: #6e6e73;
+    --text-body: #3a3a3d;
+    --divider: rgba(0,0,0,0.08);
+    --outline: rgba(0,0,0,0.18);
+    --nav-bg: rgba(255,255,255,0.85);
+    --nav-border: rgba(0,0,0,0.06);
+    --fab-bg: #16161a;
+    --fab-icon: #ffffff;
+    --press-bg: rgba(0,0,0,0.06);
+    --wave-inactive: #dcdce0;
+  }
+
+  /* на реальном мобильном экране — полноэкранное приложение, а не макет в рамке */
+  @media (max-width: 480px), (max-height: 700px) {
+    body { padding: 0; }
+    .phone {
+      width: 100%;
+      height: 100%;
+      max-width: 100%;
+      max-height: 100%;
+      border-radius: 0;
+      box-shadow: none;
+    }
+  }
+
+  .scroll {
+    height: 100%;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    padding: 68px 8px 88px;
+    scrollbar-width: none;
+  }
+  .scroll::-webkit-scrollbar { display: none; }
+
+  header {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 92px;
+    background: linear-gradient(to bottom, var(--bg) 0%, rgba(var(--bg-rgb),0.75) 45%, rgba(var(--bg-rgb),0.3) 75%, transparent 100%);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 18px;
+    z-index: 10;
+    pointer-events: none;
+    transition: background .25s ease;
+  }
+  .header-inner {
+    position: relative;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 16px;
+    pointer-events: auto;
+  }
+  .brand { display: flex; align-items: center; gap: 8px; }
+  .logo-dot { width: 27px; height: 27px; border-radius: 8px; background: var(--accent); flex-shrink: 0; }
+  .brand span { font-size: 21px; font-weight: 700; color: var(--text-primary); letter-spacing: 0.2px; }
+  .header-actions { position: absolute; right: 12px; display: flex; align-items: center; gap: 2px; }
+  .icon-btn {
+    color: var(--text-primary);
+    width: 42px; height: 42px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; border-radius: 50%;
+    touch-action: manipulation;
+    transition: background-color .15s ease, transform .1s ease;
+  }
+  .icon-btn:active { background: var(--press-bg); transform: scale(0.92); }
+  .icon-btn .icon { width: 23px; height: 23px; }
+  .icon-btn.theme-toggle .icon { width: 21px; height: 21px; }
+
+  .masonry { columns: 2; column-gap: 8px; }
+  .card {
+    break-inside: avoid; margin-bottom: 12px; cursor: pointer;
+    touch-action: manipulation;
+    transition: transform .12s ease;
+  }
+  .card:active { transform: scale(0.97); }
+  .media {
+    border-radius: 16px;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+  /* скелетон-заглушка: показывается, пока фото грузится с сервера */
+  .skeleton { position: relative; background: var(--container); }
+  .skeleton::after {
+    content: "";
+    position: absolute; inset: 0;
+    background: linear-gradient(100deg, transparent 30%, rgba(255,255,255,0.07) 50%, transparent 70%);
+    background-size: 200% 100%;
+    animation: shimmer 1.6s ease-in-out infinite;
+    pointer-events: none;
+  }
+  .phone[data-theme="light"] .skeleton::after {
+    background: linear-gradient(100deg, transparent 30%, rgba(0,0,0,0.05) 50%, transparent 70%);
+    background-size: 200% 100%;
+  }
+  @keyframes shimmer {
+    0% { background-position: 150% 0; }
+    100% { background-position: -50% 0; }
+  }
+  .ph-img {
+    opacity: 0;
+    transform: scale(1.045);
+    transition: opacity .45s ease, transform .5s cubic-bezier(0.33,1,0.68,1);
+  }
+  .ph-img.loaded { opacity: 1; transform: scale(1); }
+  .skeleton.loaded::after { animation: none; opacity: 0; transition: opacity .3s ease; }
+  .ph-img.no-anim { transition: none; }
+  .skeleton.no-anim::after { transition: none; animation: none; }
+
+  .caption {
+    font-size: 13px;
+    margin: 6px 2px 0;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .quote-card {
+    padding: 20px;
+    display: flex;
+    align-items: center;
+    min-height: 132px;
+  }
+  .quote-card p {
+    font-family: Georgia, serif;
+    font-size: 17px;
+    line-height: 1.45;
+  }
+  .voice-card {
+    border-radius: 16px;
+    padding: 16px;
+    background: var(--container);
+    border: 0.5px solid var(--container-border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 68px;
+  }
+  .voice-icon {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: rgba(55,138,221,0.15);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .voice-icon .icon { color: var(--accent-blue); }
+  .wave { flex: 1; display: flex; align-items: center; gap: 2px; height: 20px; }
+  .wave div { width: 2.5px; background: var(--wave-inactive); border-radius: 1px; }
+  .voice-time { font-size: 12.5px; color: var(--text-tertiary); flex-shrink: 0; }
+  .story-card {
+    border-radius: 16px;
+    padding: 18px;
+    background: var(--container);
+    border: 0.5px solid var(--container-border);
+    min-height: 108px;
+  }
+  .story-card .kicker { font-size: 12.5px; color: var(--text-tertiary); margin-bottom: 8px; display: flex; align-items: center; gap: 4px; }
+  .story-card p.body { font-size: 14px; line-height: 1.55; color: var(--text-body); }
+  .badge-carousel {
+    position: absolute; top: 8px; right: 8px;
+    background: rgba(0,0,0,0.5);
+    color: #fff; font-size: 11px;
+    padding: 3px 8px; border-radius: 999px;
+    display: flex; align-items: center; gap: 3px;
+  }
+  .media-track { position: absolute; inset: 0; display: flex; overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .media-track::-webkit-scrollbar { display: none; }
+  .media-track .slide { flex: 0 0 100%; scroll-snap-align: start; height: 100%; }
+  .media-dots { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 5px; z-index: 2; }
+  .media-dots div { width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,0.55); }
+  .media-dots div.active { background: #fff; width: 16px; border-radius: 3px; }
+
+  nav.island {
+    position: absolute;
+    bottom: 16px; left: 50%;
+    transform: translateX(-50%);
+    display: flex; align-items: center; gap: 26px;
+    background: var(--nav-bg);
+    border: 0.5px solid var(--nav-border);
+    border-radius: 999px;
+    padding: 12px 22px;
+    z-index: 10;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    transition: background-color .25s ease, border-color .25s ease;
+  }
+  nav.island .icon { color: var(--text-primary); width: 23px; height: 23px; cursor: pointer; touch-action: manipulation; }
+  .plus-btn {
+    width: 38px; height: 38px; border-radius: 50%;
+    background: var(--fab-bg);
+    display: flex; align-items: center; justify-content: center;
+    touch-action: manipulation;
+    transition: transform .1s ease, background-color .25s ease;
+  }
+  .plus-btn:active { transform: scale(0.9); }
+  .plus-mark { position: relative; width: 16px; height: 16px; flex-shrink: 0; }
+  .plus-mark::before, .plus-mark::after { content: ""; position: absolute; background: var(--fab-icon); border-radius: 1px; transition: background-color .25s ease; }
+  .plus-mark::before { top: 50%; left: 0; width: 100%; height: 2px; transform: translateY(-50%); }
+  .plus-mark::after { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); }
+  .avatar-dot { width: 27px; height: 27px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+
+  /* детальный просмотр — карточка подстраивается под пропорции контента, а не растягивается на весь экран */
+  .overlay {
+    position: absolute; inset: 0;
+    z-index: 50;
+    display: none;
+  }
+  .overlay.open { display: block; }
+  /* затемнение — отдельный слой ПОД контентом; именно его плавно гасим/проявляем,
+     сам контент (фото/текст) на своей прозрачности не завязан и не мигает вместе с ним */
+  .overlay-backdrop {
+    position: absolute; inset: 0;
+    background: var(--bg);
+    z-index: 0;
+    opacity: 0;
+  }
+  .detail-scroll, .detail-nav { position: relative; z-index: 1; }
+
+  /* кнопки плавают поверх контента без подложки-шапки, остаются на месте при скролле */
+  .detail-nav {
+    position: absolute; top: 16px; left: 12px; right: 12px;
+    display: flex; align-items: center; justify-content: space-between;
+    z-index: 6;
+    pointer-events: none;
+  }
+  .detail-nav .icon-circle { pointer-events: auto; }
+  .icon-circle {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: rgba(20,20,20,0.55);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; cursor: pointer;
+    touch-action: manipulation;
+    transition: background-color .15s ease, transform .1s ease;
+  }
+  .icon-circle:active { background: rgba(20,20,20,0.8); transform: scale(0.92); }
+  .icon-circle .icon { width: 20px; height: 20px; }
+
+  .detail-scroll {
+    height: 100%;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding: 10px 14px 32px;
+  }
+  .detail-scroll::-webkit-scrollbar { display: none; }
+
+  /* карточка контента: высота фото определяется его собственным aspect-ratio, никогда не бьёт на весь экран */
+  .detail-media {
+    position: relative;
+    width: 100%;
+    border-radius: 24px;
+    overflow: hidden;
+    background: #000;
+    display: flex; align-items: center; justify-content: center;
+    transform-origin: top left;
+    will-change: transform;
+  }
+  /* элементы, которые проявляются плавно после того, как карточка "долетела" на место — прозрачностью управляет JS кадр за кадром, вместе с самим полётом, чтобы не было рассинхрона */
+  .detail-fade { opacity: 0; }
+  /* пока оверлей закрыт, он не должен перехватывать тапы по ленте */
+  .overlay { pointer-events: none; }
+  .overlay.open { pointer-events: auto; }
+  .detail-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .detail-media .badge-carousel { top: 12px; right: 12px; font-size: 11px; padding: 4px 9px; }
+
+  .detail-dots { display: flex; justify-content: center; gap: 5px; margin-top: 12px; }
+  .detail-dots div { width: 5px; height: 5px; border-radius: 50%; background: var(--text-tertiary); opacity: 0.5; }
+  .detail-dots div.active { background: var(--text-primary); opacity: 1; width: 16px; border-radius: 3px; }
+
+  .quote-detail {
+    padding: 52px 30px;
+    min-height: 220px;
+  }
+  .quote-detail p { font-family: Georgia, serif; font-size: 23px; line-height: 1.5; }
+
+  .voice-detail {
+    background: var(--container);
+    border: 0.5px solid var(--container-border);
+    flex-direction: column;
+    padding: 40px 24px 32px;
+    gap: 0;
+  }
+  .voice-detail .mic-circle {
+    width: 84px; height: 84px; border-radius: 50%;
+    background: rgba(55,138,221,0.15);
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 18px;
+  }
+  .voice-detail .mic-circle .icon { width: 32px; height: 32px; color: var(--accent-blue); }
+  .voice-detail .v-title { font-size: 16px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
+  .voice-detail .v-dur { font-size: 12px; color: var(--text-tertiary); margin-bottom: 26px; }
+  .big-wave { display: flex; align-items: center; gap: 3px; height: 40px; width: 100%; justify-content: center; margin-bottom: 22px; }
+  .big-wave div { width: 3px; border-radius: 2px; }
+  .play-btn {
+    width: 54px; height: 54px; border-radius: 50%; background: var(--fab-bg);
+    display: flex; align-items: center; justify-content: center;
+    touch-action: manipulation; transition: transform .1s ease, background-color .25s ease;
+  }
+  .play-btn:active { transform: scale(0.92); }
+  .play-btn .icon { color: var(--fab-icon); width: 22px; height: 22px; }
+
+  .story-detail {
+    background: var(--container);
+    border: 0.5px solid var(--container-border);
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 26px 22px;
+  }
+  .story-detail .kicker { font-size: 12px; color: var(--text-tertiary); margin-bottom: 12px; display: flex; align-items: center; gap: 5px; }
+  .story-detail .kicker .icon { width: 13px; height: 13px; }
+  .story-detail p.body { font-size: 16px; line-height: 1.65; color: var(--text-body); }
+
+  /* блок автора и описания — всегда под карточкой, с одинаковым отступом независимо от формата медиа */
+  .detail-body { padding-top: 20px; }
+  .author-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .author-avatar { width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0; }
+  .author-info { flex: 1; min-width: 0; }
+  .author-info .name { font-size: 16px; font-weight: 600; color: var(--text-primary); }
+  .author-info .time { font-size: 12.5px; color: var(--text-secondary); margin-top: 1px; }
+  .follow-btn {
+    font-size: 13px; font-weight: 500; color: var(--text-primary);
+    border: 0.5px solid var(--outline);
+    border-radius: 999px; padding: 7px 16px;
+    white-space: nowrap;
+    touch-action: manipulation;
+    flex-shrink: 0;
+  }
+  .overlay-desc { font-size: 16px; line-height: 1.6; color: var(--text-body); margin-bottom: 18px; }
+  .actions-row { display: flex; align-items: center; gap: 26px; padding-top: 16px; border-top: 0.5px solid var(--divider); }
+  .action { display: flex; align-items: center; gap: 6px; color: var(--text-primary); touch-action: manipulation; }
+  .action .icon { width: 23px; height: 23px; }
+  .action span { font-size: 13px; color: var(--text-secondary); }
+</style>
+</head>
+<body>
+
+<!-- набор SVG-иконок: подключены прямо в разметку, ничего не подгружается извне -->
+<svg width="0" height="0" style="position:absolute;overflow:hidden" aria-hidden="true">
+  <defs>
+    <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></symbol>
+    <symbol id="icon-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+    <symbol id="icon-plus" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></symbol>
+    <symbol id="icon-chevron-left" viewBox="0 0 24 24"><polyline points="15 6 9 12 15 18"/></symbol>
+    <symbol id="icon-dots-menu" viewBox="0 0 24 24" class="filled-symbol"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></symbol>
+    <symbol id="icon-heart" viewBox="0 0 24 24"><path d="M19.5 12.6l-7.5 7.4-7.5-7.4a5 5 0 1 1 7.5-6.5 5 5 0 1 1 7.5 6.5z"/></symbol>
+    <symbol id="icon-message" viewBox="0 0 24 24"><path d="M3 20l1.3-3.9a9 8 0 1 1 3.4 2.9L3 20z"/></symbol>
+    <symbol id="icon-bookmark" viewBox="0 0 24 24"><path d="M18 3H6a1 1 0 0 0-1 1v17l7-4 7 4V4a1 1 0 0 0-1-1z"/></symbol>
+    <symbol id="icon-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><line x1="8.2" y1="10.7" x2="15.8" y2="6.3"/><line x1="8.2" y1="13.3" x2="15.8" y2="17.7"/></symbol>
+    <symbol id="icon-mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></symbol>
+    <symbol id="icon-play" viewBox="0 0 24 24" class="filled-symbol"><path d="M7 4v16l13-8z"/></symbol>
+    <symbol id="icon-photo" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5" class="filled-symbol"/><path d="M21 15l-5-5-9 9"/></symbol>
+    <symbol id="icon-notes" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="12" y2="16"/></symbol>
+    <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><line x1="12" y1="1.5" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22.5"/><line x1="4.2" y1="4.2" x2="5.9" y2="5.9"/><line x1="18.1" y1="18.1" x2="19.8" y2="19.8"/><line x1="1.5" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22.5" y2="12"/><line x1="4.2" y1="19.8" x2="5.9" y2="18.1"/><line x1="18.1" y1="5.9" x2="19.8" y2="4.2"/></symbol>
+    <symbol id="icon-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5z"/></symbol>
+  </defs>
+</svg>
+
+<div class="phone" id="phone">
+
+  <header>
+    <div class="header-inner">
+      <div class="brand"><div class="logo-dot"></div><span>тапок</span></div>
+      <div class="header-actions">
+        <div class="icon-btn theme-toggle" id="themeToggle" onclick="toggleTheme()"></div>
+        <div class="icon-btn"><svg class="icon" width="21" height="21"><use href="#icon-search"/></svg></div>
+      </div>
+    </div>
+  </header>
+
+  <div class="scroll">
+    <div class="masonry" id="feed"></div>
+    <div id="feedSentinel"></div>
+  </div>
+
+  <nav class="island">
+    <svg class="icon" width="23" height="23"><use href="#icon-grid"/></svg>
+    <div class="plus-btn"><span class="plus-mark"></span></div>
+    <div class="avatar-dot"></div>
+  </nav>
+
+  <div class="overlay" id="overlay"></div>
+
+</div>
+
+<script>
+// набор тем — можно добавлять новые, просто описав их через CSS-переменные в .phone[data-theme="..."]
+const themes = ["dark", "light"];
+let themeIndex = 0; // тёмная — по умолчанию
+
+const phoneEl = document.getElementById("phone");
+const themeToggleBtn = document.getElementById("themeToggle");
+
+function renderThemeIcon() {
+  const isDark = themes[themeIndex] === "dark";
+  themeToggleBtn.innerHTML = `<svg class="icon" width="19" height="19"><use href="#icon-${isDark ? "sun" : "moon"}"/></svg>`;
+}
+
+function toggleTheme() {
+  themeIndex = (themeIndex + 1) % themes.length;
+  const theme = themes[themeIndex];
+  if (theme === "dark") {
+    phoneEl.removeAttribute("data-theme"); // тёмная — значения по умолчанию, без атрибута
+  } else {
+    phoneEl.setAttribute("data-theme", theme);
+  }
+  renderThemeIcon();
+}
+
+renderThemeIcon();
+
+function icon(name, size) {
+  const filled = ["heart","bookmark","play","dots-menu","photo"].includes(name);
+  return `<svg class="icon${filled ? " filled" : ""}" width="${size}" height="${size}"><use href="#icon-${name}"/></svg>`;
+}
+
+// пока фото грузится с сервера — на его месте мерцающий скелетон;
+// как только картинка реально отрисовалась в браузере, скелетон гасится, а фото плавно проявляется
+function onPhotoLoad(img) {
+  img.classList.add("loaded");
+  const box = img.closest(".skeleton");
+  if (box) box.classList.add("loaded");
+}
+
+// если картинка уже была загружена браузером раньше (лежит в кэше — например, при открытии
+// поста, который только что был виден в ленте), не проигрываем анимацию проявления заново:
+// иначе получается лишнее мигание "погасло-появилось" на уже знакомой картинке
+function settleIfCached(root) {
+  root.querySelectorAll(".ph-img").forEach((img) => {
+    if (img.complete && img.naturalWidth > 0) {
+      img.classList.add("loaded", "no-anim");
+      const box = img.closest(".skeleton");
+      if (box) box.classList.add("loaded", "no-anim");
+    }
+  });
+}
+
+const posts = [
+  { type: "photo", ratio: "3/4", carousel: 3, tags: ["sunset,river", "sunset,bridge", "river,evening"], caption: "закат над рекой, снято с моста · @лия", author: "лия", avatar: "#F0997B", time: "2 часа назад", desc: "закат над рекой, снято с моста возле дома. люблю это время суток больше всего", likes: 128, comments: 14 },
+  { type: "quote", color: "#EEEDFE", text: "\u201eдом — это не место, а чувство\u201c", caption: "@марк", author: "марк", avatar: "#7F77DD", time: "5 часов назад", desc: "", likes: 64, comments: 3 },
+  { type: "photo", ratio: "16/9", tags: "homemade,bread", caption: "как я научилась печь хлеб · статья", author: "оля", avatar: "#5DCAA5", time: "вчера", desc: "как я научилась печь хлеб дома без духовки — короткая статья про первый опыт", likes: 210, comments: 22 },
+  { type: "voice", duration: "0:34", caption: "голосовая · @нина", author: "нина", avatar: "#EEEDFE", time: "вчера", desc: "записала звук утра в горах, где отдыхала в июне", likes: 42, comments: 3 },
+  { type: "photo", ratio: "2/3", tags: "autumn,park", caption: "осень в парке", author: "аня", avatar: "#ED93B1", time: "2 дня назад", desc: "осень в парке возле дома", likes: 89, comments: 5 },
+  { type: "story", caption: "@саша", author: "саша", avatar: "#F5C4B3", time: "3 дня назад", desc: "в тот вечер мы просто гуляли по городу без цели, и это было лучшее решение за долгое время", likes: 156, comments: 19 },
+  { type: "photo", ratio: "4/5", carousel: 4, tags: ["coast,sea", "beach,wind", "coast,waves", "seaside"], caption: "поездка на побережье · @дима", author: "дима", avatar: "#6FA0D6", time: "4 дня назад", desc: "три дня на побережье — соль, ветер и полное отсутствие связи", likes: 174, comments: 11 },
+  { type: "quote", color: "#FDE8D8", text: "\u201eторопиться некуда, всё придёт вовремя\u201c", caption: "@ирина", author: "ирина", avatar: "#E8A15C", time: "4 дня назад", desc: "", likes: 51, comments: 2 },
+  { type: "photo", ratio: "1/1", tags: "coffee,morning", caption: "утренний кофе", author: "поля", avatar: "#B08FDE", time: "5 дней назад", desc: "утренний кофе на подоконнике, любимый ритуал перед началом дня", likes: 97, comments: 6 },
+  { type: "voice", duration: "1:12", caption: "голосовая · @гриша", author: "гриша", avatar: "#EEEDFE", time: "5 дней назад", desc: "рассказ о том, как прошёл поход выходного дня", likes: 33, comments: 1 },
+  { type: "photo", ratio: "3/4", tags: "dog,walk", caption: "прогулка с собакой", author: "катя", avatar: "#8FC46A", time: "6 дней назад", desc: "вечерняя прогулка с собакой по набережной", likes: 143, comments: 9 },
+  { type: "story", caption: "@максим", author: "максим", avatar: "#F0997B", time: "неделю назад", desc: "переехал в новый город и первую неделю просто ходил и смотрел, ничего не планируя — оказалось, так намного легче привыкнуть", likes: 201, comments: 27 },
+  { type: "photo", ratio: "5/4", carousel: 2, tags: ["garden,cottage", "garden,spring"], caption: "выходные на даче · @лена", author: "лена", avatar: "#E6A15A", time: "неделю назад", desc: "первые выходные на даче в этом сезоне, сажали зелень и просто отдыхали", likes: 112, comments: 8 },
+  { type: "quote", color: "#DCEFE6", text: "\u201eлучшие истории случаются без плана\u201c", caption: "@тимур", author: "тимур", avatar: "#5DCAA5", time: "неделю назад", desc: "", likes: 78, comments: 4 },
+  { type: "photo", ratio: "2/3", tags: "peony,flowers", caption: "цветы с рынка", author: "вера", avatar: "#ED93B1", time: "8 дней назад", desc: "купила пионы на рынке по дороге домой, весь дом теперь пахнет летом", likes: 165, comments: 13 },
+  { type: "photo", ratio: "16/9", tags: "pasta,homemade", caption: "рецепт домашней пасты · статья", author: "оля", avatar: "#5DCAA5", time: "9 дней назад", desc: "делюсь простым рецептом домашней пасты без машинки для теста", likes: 188, comments: 17 },
+  { type: "voice", duration: "0:48", caption: "голосовая · @соня", author: "соня", avatar: "#EEEDFE", time: "9 дней назад", desc: "звук дождя за окном, записала для тех, кто не может уснуть", likes: 59, comments: 3 },
+  { type: "photo", ratio: "3/4", carousel: 5, tags: ["art,gallery", "art,exhibition", "museum,art", "sculpture,art", "painting,gallery"], caption: "выставка в городе · @артём", author: "артём", avatar: "#D6A15C", time: "10 дней назад", desc: "сходили на выставку современного искусства в центре города", likes: 132, comments: 10 },
+  { type: "story", caption: "@юля", author: "юля", avatar: "#7F77DD", time: "10 дней назад", desc: "долго не могла начать вести дневник, а потом просто перестала думать об этом красиво и начала писать как есть", likes: 94, comments: 6 },
+  { type: "photo", ratio: "4/5", tags: "forest,rain", caption: "лес после дождя", author: "паша", avatar: "#5DCAA5", time: "11 дней назад", desc: "гуляли по лесу сразу после дождя, воздух был совершенно другим", likes: 149, comments: 7 },
+];
+
+// эмулируем "живую" подгрузку: у каждого запуска приложения — свой токен,
+// поэтому LoremFlickr на каждый открытие/перезагрузку отдаёт новую случайную
+// фотографию по тем же тегам, а не один и тот же закэшированный кадр
+const LIVE_SESSION = `${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+let liveCounter = 0;
+
+const RATIO_DIMS = {
+  "3/4": [600, 800], "16/9": [800, 450], "2/3": [600, 900],
+  "4/5": [600, 750], "1/1": [700, 700], "5/4": [750, 600],
+};
+
+function livePhotoUrl(ratio, tags) {
+  const [w, h] = RATIO_DIMS[ratio] || [600, 800];
+  liveCounter += 1;
+  return `https://loremflickr.com/${w}/${h}/${tags}?random=${LIVE_SESSION}-${liveCounter}`;
+}
+
+const feed = document.getElementById("feed");
+const overlay = document.getElementById("overlay");
+let activeCard = null; // карточка в ленте, из/в которую летит анимация
+let isAnimating = false;
+
+// строим DOM-карточку по объекту поста — используется и для стартовой ленты,
+// и для карточек, которые подгружаются бесконечным скроллом
+function renderCard(p, i) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.onclick = () => openFullscreen(i, card);
+
+  let mediaHtml = "";
+  if (p.type === "photo") {
+    if (p.carousel) {
+      p.liveImgs = p.liveImgs || p.tags.map((t) => livePhotoUrl(p.ratio, t));
+      const slides = p.liveImgs.map((src) =>
+        `<div class="slide skeleton"><img class="ph-img" src="${src}" loading="lazy" alt="" onload="onPhotoLoad(this)" onerror="onPhotoLoad(this)"></div>`
+      ).join("");
+      const dots = Array.from({ length: p.carousel }).map((_, d) => `<div class="${d === 0 ? "active" : ""}"></div>`).join("");
+      mediaHtml = `<div class="media" style="aspect-ratio:${p.ratio};">
+        <div class="media-track">${slides}</div>
+        <div class="media-dots">${dots}</div>
+      </div>`;
+    } else {
+      p.liveImg = p.liveImg || livePhotoUrl(p.ratio, p.tags);
+      mediaHtml = `<div class="media skeleton" style="aspect-ratio:${p.ratio};"><img class="ph-img" src="${p.liveImg}" loading="lazy" alt="" onload="onPhotoLoad(this)" onerror="onPhotoLoad(this)"></div>`;
+    }
+  } else if (p.type === "quote") {
+    mediaHtml = `<div class="media quote-card" style="background:${p.color};"><p style="color:#3C3489;">${p.text}</p></div>`;
+  } else if (p.type === "voice") {
+    mediaHtml = `<div class="voice-card">
+      <div class="voice-icon">${icon("play", 14)}</div>
+      <div class="wave">
+        <div style="height:7px"></div><div style="height:16px"></div><div style="height:10px"></div>
+        <div style="height:19px"></div><div style="height:8px"></div><div style="height:14px"></div>
+      </div>
+      <div class="voice-time">${p.duration}</div>
+    </div>`;
+  } else if (p.type === "story") {
+    mediaHtml = `<div class="story-card">
+      <div class="kicker">${icon("notes", 12)}история</div>
+      <p class="body">${p.desc.slice(0, 46)}...</p>
+    </div>`;
+  }
+
+  card.innerHTML = mediaHtml + `<div class="caption">${p.caption}</div>`;
+  settleIfCached(card); // если фото уже было в кэше браузера — без лишней анимации
+  return card;
+}
+
+posts.forEach((p, i) => feed.appendChild(renderCard(p, i)));
+
+// --- бесконечная лента: догружаем реальные случайные фото через бесплатный Picsum Photos API ---
+// у API конечный список картинок, но для теста бесконечности мы просто зацикливаем номера страниц
+const PICSUM_MAX_PAGE = 30;
+const PICSUM_PAGE_SIZE = 6;
+let picsumPageCursor = 1;
+let isLoadingMore = false;
+
+const GEN_NAMES = ["лада", "глеб", "юра", "соня", "витя", "марго", "дэн", "настя", "олег", "ксюша", "паша", "инна", "рома"];
+const GEN_AVATARS = ["#F0997B", "#7F77DD", "#5DCAA5", "#ED93B1", "#6FA0D6", "#E8A15C", "#B08FDE", "#8FC46A", "#D6A15C"];
+const GEN_CAPTIONS = ["случайный кадр дня", "минутка спокойствия", "просто момент", "без особого повода", "как оно есть", "маленькая деталь дня", "то самое чувство", "будни, но с настроением", "мимолётное", "на память", "увидела и сохранила", "по дороге домой"];
+const GEN_TIMES = ["только что", "5 минут назад", "полчаса назад", "час назад", "3 часа назад", "сегодня утром"];
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+// превращаем ответ Picsum API (реальные фото с их id и пропорциями) в объект поста нашей ленты
+function picsumItemToPost(item) {
+  const w = 600;
+  const h = Math.max(300, Math.round((w * item.height) / item.width)) || 750;
+  const name = pick(GEN_NAMES);
+  const capt = pick(GEN_CAPTIONS);
+  return {
+    type: "photo",
+    ratio: `${w}/${h}`,
+    liveImg: `https://picsum.photos/id/${item.id}/${w}/${h}`,
+    caption: `${capt} · @${name}`,
+    author: name,
+    avatar: pick(GEN_AVATARS),
+    time: pick(GEN_TIMES),
+    desc: capt,
+    likes: 6 + Math.floor(Math.random() * 300),
+    comments: Math.floor(Math.random() * 40),
+  };
+}
+
+// пока идёт реальный сетевой запрос — внизу ленты держим карточки-призраки (тот же скелетон,
+// что и у обычных фото), чтобы сразу было видно: сейчас что-то подгружается
+function ghostCard(ratio) {
+  const card = document.createElement("div");
+  card.className = "card ghost-placeholder";
+  card.innerHTML = `<div class="media skeleton" style="aspect-ratio:${ratio};"></div><div class="caption" style="opacity:0;">·</div>`;
+  return card;
+}
+
+async function loadMorePosts() {
+  if (isLoadingMore) return;
+  isLoadingMore = true;
+
+  const ghosts = ["3/4", "1/1", "4/5", "2/3"].map(ghostCard);
+  ghosts.forEach((g) => feed.appendChild(g));
+
+  try {
+    const page = ((picsumPageCursor - 1) % PICSUM_MAX_PAGE) + 1;
+    picsumPageCursor += 1;
+    const res = await fetch(`https://picsum.photos/v2/list?page=${page}&limit=${PICSUM_PAGE_SIZE}`);
+    if (!res.ok) throw new Error("picsum request failed");
+    const items = await res.json();
+
+    ghosts.forEach((g) => g.remove());
+    items.forEach((item) => {
+      const p = picsumItemToPost(item);
+      const idx = posts.length;
+      posts.push(p);
+      feed.appendChild(renderCard(p, idx));
+    });
+  } catch (err) {
+    ghosts.forEach((g) => g.remove());
+    console.error("не удалось догрузить ленту:", err);
+  } finally {
+    isLoadingMore = false;
+  }
+}
+
+const feedSentinel = document.getElementById("feedSentinel");
+const feedObserver = new IntersectionObserver(
+  (entries) => { if (entries[0].isIntersecting) loadMorePosts(); },
+  { root: document.querySelector(".scroll"), rootMargin: "700px 0px" }
+);
+feedObserver.observe(feedSentinel);
+
+// свайп по карусели в ленте: обновляем активную точку при скролле трека,
+// и не даём этому же жесту случайно открыть карточку на весь экран
+let trackDragX = null, trackDragMoved = false;
+feed.addEventListener("pointerdown", e => {
+  if (!e.target.closest(".media-track")) return;
+  trackDragX = e.clientX;
+  trackDragMoved = false;
+});
+feed.addEventListener("pointermove", e => {
+  if (trackDragX === null) return;
+  if (Math.abs(e.clientX - trackDragX) > 6) trackDragMoved = true;
+});
+feed.addEventListener("pointerup", () => { trackDragX = null; });
+feed.addEventListener("click", e => {
+  if (e.target.closest(".media-track") && trackDragMoved) {
+    e.stopPropagation();
+    trackDragMoved = false;
+  }
+}, true);
+feed.addEventListener("scroll", e => {
+  const track = e.target;
+  if (!track.classList || !track.classList.contains("media-track")) return;
+  const idx = Math.round(track.scrollLeft / track.clientWidth);
+  track.parentElement.querySelectorAll(".media-dots div").forEach((d, i) => d.classList.toggle("active", i === idx));
+}, true);
+
+// раньше позиция/масштаб/скругление/прозрачность считались вручную на каждом
+// кадре через requestAnimationFrame — это заставляло браузer каждый раз заново
+// пересчитывать стили и лагало, особенно на телефонах. Теперь JS только
+// выставляет начальное и конечное состояние, а само движение делает браузер
+// через один CSS-transition — это в разы дешевле и плавнее.
+const EASE_CSS = "cubic-bezier(0.33, 1, 0.68, 1)"; // соответствует easeOutCubic
+
+// el — элемент, который "летит"; native — его собственное (нетрансформированное) положение в layout;
+// fromRect/toRect — визуальные прямоугольники начала и конца полёта (в координатах окна)
+// backdropEl — слой затемнения позади контента, гасим/проявляем его тем же переходом
+function runFlip({ el, native, fromRect, toRect, fromRadius, toRadius, duration, fadeEls, fadeIn, backdropEl, onDone }) {
+  const sx0 = fromRect.width / native.width || 1;
+  const sy0 = fromRect.height / native.height || 1;
+  const sx1 = toRect.width / native.width || 1;
+  const sy1 = toRect.height / native.height || 1;
+  const dx0 = fromRect.left - native.left;
+  const dy0 = fromRect.top - native.top;
+  const dx1 = toRect.left - native.left;
+  const dy1 = toRect.top - native.top;
+
+  // border-radius задаётся ДО масштабирования, поэтому transform его искажает.
+  // Компенсируем деление на масштаб по каждой оси, но ограничиваем сверху —
+  // без ограничения при сильно неравномерном масштабе радиус мог "раздуваться"
+  // в разы и выглядеть как пузырь на середине анимации.
+  const rx0 = Math.min(fromRadius / Math.max(sx0, 0.001), fromRadius * 2.2);
+  const ry0 = Math.min(fromRadius / Math.max(sy0, 0.001), fromRadius * 2.2);
+  const rx1 = Math.min(toRadius / Math.max(sx1, 0.001), toRadius * 2.2);
+  const ry1 = Math.min(toRadius / Math.max(sy1, 0.001), toRadius * 2.2);
+
+  // шаг 1: мгновенно (без перехода) ставим стартовое состояние
+  el.style.transition = "none";
+  el.style.transform = `translate(${dx0}px, ${dy0}px) scale(${sx0}, ${sy0})`;
+  el.style.borderRadius = `${rx0}px / ${ry0}px`;
+  if (backdropEl) { backdropEl.style.transition = "none"; backdropEl.style.opacity = fadeIn ? 0 : 1; }
+  fadeEls.forEach(f => { f.style.transition = "none"; f.style.opacity = fadeIn ? 0 : 1; });
+
+  void el.offsetWidth; // форсируем применение стартового состояния до включения transition
+
+  // шаг 2: включаем transition и сразу ставим конечное состояние — дальше браузер сам всё анимирует
+  requestAnimationFrame(() => {
+    const main = `${duration}ms ${EASE_CSS}`;
+    el.style.transition = `transform ${main}, border-radius ${main}`;
+    el.style.transform = `translate(${dx1}px, ${dy1}px) scale(${sx1}, ${sy1})`;
+    el.style.borderRadius = `${rx1}px / ${ry1}px`;
+
+    if (backdropEl) {
+      backdropEl.style.transition = `opacity ${main}`;
+      backdropEl.style.opacity = fadeIn ? 1 : 0;
+    }
+    // текст/кнопки: при открытии проявляются во второй половине полёта, при закрытии — гаснут в первой
+    const fadeDuration = fadeIn ? Math.round(duration * 0.65) : Math.round(duration * 0.5);
+    const fadeDelay = fadeIn ? Math.round(duration * 0.35) : 0;
+    fadeEls.forEach(f => {
+      f.style.transition = `opacity ${fadeDuration}ms ${EASE_CSS} ${fadeDelay}ms`;
+      f.style.opacity = fadeIn ? 1 : 0;
+    });
+  });
+
+  setTimeout(() => { if (typeof onDone === "function") onDone(); }, duration + 30);
+}
+
+// для цитат/голосовых/историй карточка в ленте и в деталях совсем разной формы —
+// буквальный "полёт" с растяжением превращался в медленно раздувающийся пузырь.
+// Вместо этого — простое и быстрое масштабирование+фейд на месте, тоже одним CSS-переходом.
+function runReveal({ el, duration, fadeEls, fadeIn, backdropEl, onDone }) {
+  el.style.transformOrigin = "center center";
+  el.style.transition = "none";
+  el.style.transform = `scale(${fadeIn ? 0.9 : 1})`;
+  el.style.opacity = fadeIn ? 0 : 1;
+  if (backdropEl) { backdropEl.style.transition = "none"; backdropEl.style.opacity = fadeIn ? 0 : 1; }
+  fadeEls.forEach(f => { f.style.transition = "none"; f.style.opacity = fadeIn ? 0 : 1; });
+
+  void el.offsetWidth; // форсируем применение стартового состояния до включения transition
+
+  requestAnimationFrame(() => {
+    const main = `${duration}ms ${EASE_CSS}`;
+    el.style.transition = `transform ${main}, opacity ${main}`;
+    el.style.transform = `scale(${fadeIn ? 1 : 0.9})`;
+    el.style.opacity = fadeIn ? 1 : 0;
+    if (backdropEl) { backdropEl.style.transition = `opacity ${main}`; backdropEl.style.opacity = fadeIn ? 1 : 0; }
+    fadeEls.forEach(f => { f.style.transition = `opacity ${main}`; f.style.opacity = fadeIn ? 1 : 0; });
+  });
+
+  setTimeout(() => { if (typeof onDone === "function") onDone(); }, duration + 30);
+}
+
+function closeFullscreen() {
+  if (isAnimating) return;
+  isAnimating = true;
+
+  const detailMedia = overlay.querySelector(".detail-media");
+  const backdropEl = overlay.querySelector(".overlay-backdrop");
+  const fadeEls = overlay.querySelectorAll(".detail-fade");
+  const isPhoto = detailMedia && detailMedia.dataset.type === "photo";
+
+  // если исходная карточка всё ещё в ленте (не проскроллена мимо и не удалена) — летим обратно в неё,
+  // иначе просто аккуратно уменьшаемся к центру, чтобы анимация не сломалась
+  const targetEl = activeCard && document.contains(activeCard) ? activeCard.firstElementChild : null;
+
+  const finish = () => {
+    overlay.classList.remove("open");
+    overlay.innerHTML = "";
+    // возвращаем видимость карточке в ленте, которую прятали на время просмотра
+    if (activeCard) activeCard.style.visibility = "";
+    activeCard = null;
+    isAnimating = false;
+  };
+
+  if (isPhoto && detailMedia && targetEl) {
+    detailMedia.style.transition = "none";
+    detailMedia.style.transform = "none"; // сброс перед замером собственного (естественного) положения
+    const native = detailMedia.getBoundingClientRect();
+    const targetRect = targetEl.getBoundingClientRect();
+    runFlip({
+      el: detailMedia,
+      native,
+      fromRect: native,
+      toRect: targetRect,
+      fromRadius: 24,
+      toRadius: 16,
+      duration: 320,
+      fadeEls,
+      fadeIn: false,
+      backdropEl,
+      onDone: finish,
+    });
+  } else if (detailMedia) {
+    runReveal({
+      el: detailMedia,
+      duration: 220,
+      fadeEls,
+      fadeIn: false,
+      backdropEl,
+      onDone: finish,
+    });
+  } else {
+    finish();
+  }
+}
+
+function openFullscreen(i, cardEl) {
+  if (isAnimating) return;
+  isAnimating = true;
+  const p = posts[i];
+  activeCard = cardEl;
+  // прямоугольник самой карточки в ленте — точка старта для анимации "полёта"
+  const sourceRect = cardEl.firstElementChild.getBoundingClientRect();
+
+  // карточка контента: у фото — своя пропорция (aspect-ratio), у остальных типов — высота по содержимому
+  let mediaHtml = "";
+  if (p.type === "photo") {
+    const detailSrc = p.carousel
+      ? (p.liveImgs || (p.liveImgs = p.tags.map((t) => livePhotoUrl(p.ratio, t))))[0]
+      : (p.liveImg || (p.liveImg = livePhotoUrl(p.ratio, p.tags)));
+    mediaHtml = `<div class="detail-media skeleton" data-type="photo" style="aspect-ratio:${p.ratio};"><img class="ph-img" src="${detailSrc}" alt="" onload="onPhotoLoad(this)" onerror="onPhotoLoad(this)"></div>`;
+  } else if (p.type === "quote") {
+    mediaHtml = `<div class="detail-media quote-detail" data-type="quote" style="background:${p.color};"><p style="color:#3C3489;">${p.text}</p></div>`;
+  } else if (p.type === "voice") {
+    mediaHtml = `<div class="detail-media voice-detail" data-type="voice">
+      <div class="mic-circle">${icon("mic", 32)}</div>
+      <div class="v-title">${p.author === "нина" ? "утро в горах" : p.author}</div>
+      <div class="v-dur">${p.duration}</div>
+      <div class="big-wave">
+        <div style="height:13px; background:#378add;"></div>
+        <div style="height:27px; background:#378add;"></div>
+        <div style="height:17px; background:#378add;"></div>
+        <div style="height:34px; background:#378add;"></div>
+        <div style="height:20px; background:#378add;"></div>
+        <div style="height:11px; background:var(--wave-inactive);"></div>
+        <div style="height:25px; background:var(--wave-inactive);"></div>
+        <div style="height:16px; background:var(--wave-inactive);"></div>
+        <div style="height:28px; background:var(--wave-inactive);"></div>
+      </div>
+      <div class="play-btn">${icon("play", 22)}</div>
+    </div>`;
+  } else if (p.type === "story") {
+    mediaHtml = `<div class="detail-media story-detail" data-type="story">
+      <div class="kicker">${icon("notes", 13)}история</div>
+      <p class="body">${p.desc}</p>
+    </div>`;
+  }
+
+  // под карточкой — точки-пагинация для карусели (не поверх фото, а под ним)
+  let dotsHtml = "";
+  if (p.carousel) {
+    let dots = "";
+    for (let d = 0; d < p.carousel; d++) dots += `<div class="${d === 0 ? "active" : ""}"></div>`;
+    dotsHtml = `<div class="detail-dots">${dots}</div>`;
+  }
+
+  const descHtml = p.desc && p.type !== "story" ? `<div class="overlay-desc">${p.desc}</div>` : "";
+
+  // никакой сплошной шапки — только плавающие кнопки поверх контента, как в реальных приложениях
+  // dots, тело поста и верхние кнопки — это .detail-fade: они не летят, а плавно проявляются
+  // уже после того, как сама карточка "долетела" на своё место
+  overlay.innerHTML = `
+    <div class="overlay-backdrop"></div>
+    <div class="detail-scroll">
+      ${mediaHtml}
+      <div class="detail-fade">${dotsHtml}</div>
+      <div class="detail-body detail-fade">
+        <div class="author-row">
+          <div class="author-avatar" style="background:${p.avatar};"></div>
+          <div class="author-info"><div class="name">${p.author}</div><div class="time">${p.time}</div></div>
+          <div class="follow-btn">подписаться</div>
+        </div>
+        ${descHtml}
+        <div class="actions-row">
+          <div class="action">${icon("heart", 23)}<span>${p.likes}</span></div>
+          <div class="action">${icon("message", 23)}<span>${p.comments}</span></div>
+          <div class="action">${icon("bookmark", 23)}</div>
+          <div style="flex:1;"></div>
+          <div class="action">${icon("share", 23)}</div>
+        </div>
+      </div>
+    </div>
+    <div class="detail-nav detail-fade">
+      <div class="icon-circle" onclick="closeFullscreen()">${icon("chevron-left", 20)}</div>
+      <div class="icon-circle">${icon("dots-menu", 20)}</div>
+    </div>`;
+
+  overlay.classList.add("open");
+  settleIfCached(overlay); // фото поста уже было видно в ленте — не проигрываем анимацию проявления заново
+  // прячем карточку в ленте на время просмотра — иначе, пока фон плавно
+  // проявляется, под ним на секунду будет видно два одинаковых кадра сразу
+  // (тот, что летит, и тот, что уже лежит в ленте на том же месте)
+  cardEl.style.visibility = "hidden";
+
+  const detailMedia = overlay.querySelector(".detail-media");
+  const backdropEl = overlay.querySelector(".overlay-backdrop");
+  const fadeEls = overlay.querySelectorAll(".detail-fade");
+
+  if (p.type === "photo") {
+    // прямоугольник карточки уже занял своё естественное место в детальном экране — отсюда и начинаем полёт
+    const native = detailMedia.getBoundingClientRect();
+    runFlip({
+      el: detailMedia,
+      native,
+      fromRect: sourceRect,
+      toRect: native,
+      fromRadius: 16,
+      toRadius: 24,
+      duration: 380,
+      fadeEls,
+      fadeIn: true,
+      backdropEl,
+      onDone: () => { isAnimating = false; },
+    });
+  } else {
+    // цитата/голосовая/история выглядят в ленте и в деталях совсем по-разному —
+    // вместо растяжения одной формы в другую (получался медленный "пузырь")
+    // делаем быстрое проявление на месте
+    runReveal({
+      el: detailMedia,
+      duration: 260,
+      fadeEls,
+      fadeIn: true,
+      backdropEl,
+      onDone: () => { isAnimating = false; },
+    });
+  }
+}
+</script>
+
+</body>
+</html>
