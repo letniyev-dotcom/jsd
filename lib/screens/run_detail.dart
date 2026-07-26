@@ -349,12 +349,7 @@ class _RunHero extends StatelessWidget {
           ),
           if (run.headCommit.isNotEmpty) ...[
             const SizedBox(height: 12),
-            Text(
-              run.headCommit,
-              style: TextStyle(fontSize: 13, color: pal.text, height: 1.35),
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-            ),
+            _CommitMessageBlock(message: run.headCommit),
           ],
           const SizedBox(height: 12),
           Row(children: [
@@ -397,6 +392,141 @@ class _RunHero extends StatelessWidget {
                 )),
           ]),
         ],
+      ),
+    );
+  }
+}
+
+
+/// Тело commit-message: заголовок + список изменений.
+/// Строки с `#n1234` рисуются скруглённой плашкой с названием бага
+/// (ellipsis). Раньше headCommit обрезался на 3 строки и changelog
+/// был невидим в открытой сборке.
+class _CommitMessageBlock extends StatelessWidget {
+  final String message;
+  const _CommitMessageBlock({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = context.pal;
+    final lines = message.split('\n');
+    String title = '';
+    final body = <String>[];
+    for (final raw in lines) {
+      final line = raw.trimRight();
+      if (title.isEmpty) {
+        if (line.trim().isEmpty) continue;
+        title = line.trim();
+      } else {
+        body.add(line);
+      }
+    }
+    while (body.isNotEmpty && body.last.trim().isEmpty) {
+      body.removeLast();
+    }
+
+    final bugsById = <String, BugItem>{
+      for (final b in AppState.I.bugs) b.id: b,
+    };
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (title.isNotEmpty)
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: pal.text,
+              height: 1.35,
+            ),
+          ),
+        if (body.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text(
+            'Список изменений',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: pal.sub,
+              letterSpacing: 0.4,
+            ),
+          ),
+          const SizedBox(height: 6),
+          for (final line in body)
+            if (line.trim().isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: _ChangelogLine(line: line, bugsById: bugsById),
+              ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ChangelogLine extends StatelessWidget {
+  final String line;
+  final Map<String, BugItem> bugsById;
+  const _ChangelogLine({required this.line, required this.bugsById});
+
+  static final _mentionRe = RegExp(r'#n\d{4}');
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = context.pal;
+    final matches = _mentionRe.allMatches(line).toList();
+    if (matches.isEmpty) {
+      return Text(
+        line,
+        style: TextStyle(fontSize: 13, color: pal.text, height: 1.4),
+      );
+    }
+    final spans = <InlineSpan>[];
+    var last = 0;
+    for (final m in matches) {
+      if (m.start > last) {
+        spans.add(TextSpan(text: line.substring(last, m.start)));
+      }
+      final token = m.group(0)!;
+      final id = token.substring(1);
+      final bug = bugsById[id];
+      final label = (bug == null || bug.title.trim().isEmpty)
+          ? token
+          : bug.title.trim();
+      spans.add(WidgetSpan(
+        alignment: PlaceholderAlignment.middle,
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 180),
+          margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          decoration: BoxDecoration(
+            color: AppColors.accent.withValues(alpha: 0.16),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: AppColors.accent,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              height: 1.2,
+            ),
+          ),
+        ),
+      ));
+      last = m.end;
+    }
+    if (last < line.length) {
+      spans.add(TextSpan(text: line.substring(last)));
+    }
+    return Text.rich(
+      TextSpan(
+        style: TextStyle(fontSize: 13, color: pal.text, height: 1.4),
+        children: spans,
       ),
     );
   }

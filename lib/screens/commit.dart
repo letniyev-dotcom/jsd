@@ -57,10 +57,26 @@ class _CommitScreenState extends State<CommitScreen> {
     final api = AppState.I.api;
     final repo = AppState.I.activeRepo;
     final files = AppState.I.stagedFiles;
-    final msg = _ctrl.text.trim();
+    final title = _ctrl.text.trim();
     if (api == null || repo == null) return;
     if (files.isEmpty) return;
-    if (msg.isEmpty) return;
+    if (title.isEmpty) return;
+    // Список изменений дописывается в тело commit-message, чтобы он
+    // был виден в GitHub Actions / run detail (head_commit.message).
+    // Раньше changelog жил только локально и сразу очищался — в
+    // открытой сборке его не было видно.
+    final changelogRaw = AppState.I.changelog.trim();
+    final changelogBody = changelogRaw
+        .split('\n')
+        .map((l) => l.trimRight())
+        .where((l) {
+          final t = l.replaceAll('•', '').trim();
+          return t.isNotEmpty;
+        })
+        .join('\n');
+    final msg = changelogBody.isEmpty
+        ? title
+        : '$title\n\n$changelogBody';
     // Уже идёт активная заливка — второй пуш не запускаем. Кнопка в
     // этом случае дизейблится в `_NewRepoCard`/`_UploadCard` через
     // AppState.activeUpload.status, но подстраховываемся ещё и здесь.
