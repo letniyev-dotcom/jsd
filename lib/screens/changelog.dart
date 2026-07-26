@@ -1,22 +1,32 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../iconify.dart';
+import '../navigation.dart';
 import '../state.dart';
 import '../theme.dart';
+import 'bug_detail.dart';
+import 'bugs.dart' show bugThumbColor;
 
 /// Экран «Список изменений к сборке».
 ///
-/// Как в заметках: никакой непрозрачной шапки и нижней плашки —
-/// текст уходит под плавающие кнопки и под край клавиатуры, контент
-/// всегда виден. При Enter автоматически подставляется «• ».
+/// По просьбе пользователя — как в заметках: никакой шапки-контейнера,
+/// всё безгранично и прозрачно, курсор сразу в тексте. Единственный
+/// UI-элемент поверх текста — плавающие кнопки «назад»/«готово» в углах
+/// (полупрозрачные кружки, не сплошная плашка).
 ///
-/// Упоминания багов: ввод `#` открывает компактный пикер; выбранный
-/// баг вставляется как `#n1234` и подсвечивается акцентом. Текст
-/// хранится в [AppState.changelog] и при пуше дописывается в тело
-/// commit-message — поэтому виден в открытой сборке (run detail).
+/// При переходе на новую строку (Enter) перед курсором автоматически
+/// подставляется маркер «• », как в списке.
+///
+/// Если ввести «#», открывается небольшая прокручиваемая панель со
+/// списком баг-репортов (миниатюра + название, обрезается многоточием,
+/// если длинное) — печатая дальше, список фильтруется по вхождению в
+/// название. Выбор бага вставляет в текст токен вида «#n1234 », который
+/// [_MentionController] всегда рендерит как скруглённую плашку с
+/// миниатюрой и названием бага. Тап по плашке открывает соответствующий
+/// баг-репорт.
+///
+/// Текст (включая токены «#n1234») хранится в [AppState.changelog] и
+/// уходит в тело коммита при заливке — см. `commit.dart`.
 class ChangelogScreen extends StatefulWidget {
   const ChangelogScreen({super.key});
   @override
@@ -26,42 +36,39 @@ class ChangelogScreen extends StatefulWidget {
 class _ChangelogScreenState extends State<ChangelogScreen> {
   static const _bullet = '• ';
 
-  /// Маркер упоминания в тексте: `#n1234` (полный id бага).
-  static final _mentionRe = RegExp(r'#n\d{4}');
-
   late final _MentionController _ctrl;
   final _focus = FocusNode();
   String _prevText = '';
   bool _guard = false;
 
-  /// Активный запрос после `#` (без самой решётки). null — пикер скрыт.
-  String? _mentionQuery;
-  /// Смещение курсора, на котором стоит `#` (начало упоминания).
-  int _mentionStart = -1;
+  /// Позиция символа «#», с которого начался текущий mention (null —
+  /// панель выбора бага закрыта).
+  int? _mentionStart;
+  String _mentionQuery = '';
 
   @override
   void initState() {
     super.initState();
     final existing = AppState.I.changelog;
+    // Если список ещё пуст — сразу подставляем первый маркер, чтобы
+    // экран выглядел как начатый список, а не пустая страница.
     final initial = existing.isEmpty ? _bullet : existing;
     _ctrl = _MentionController(text: initial);
     _ctrl.selection = TextSelection.collapsed(offset: initial.length);
     _prevText = initial;
     _ctrl.addListener(_onChanged);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _focus.requestFocus();
-    });
   }
 
   @override
   void dispose() {
-    final t = _ctrl.text;
-    AppState.I.changelog = (t == _bullet || t.trim().isEmpty) ? '' : t;
+    AppState.I.changelog = _ctrl.text == _bullet ? '' : _ctrl.text;
     _ctrl.removeListener(_onChanged);
     _ctrl.dispose();
     _focus.dispose();
     super.dispose();
   }
+
+  static bool _isBreak(String ch) => ch == ' ' || ch == '\n';
 
   void _onChanged() {
     if (_guard) return;
@@ -69,7 +76,7 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
     final sel = _ctrl.selection;
     final grew = text.length > _prevText.length;
 
-    // Авто-буллет при Enter.
+    // 1. Маркер новой строки.
     if (grew &&
         sel.isCollapsed &&
         sel.baseOffset > 0 &&
@@ -90,235 +97,155 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
     }
 
     _prevText = text;
-    if (sel.isCollapsed) {
-      _updateMentionState(text, sel.baseOffset);
-    } else {
-      if (_mentionQuery != null) setState(() => _mentionQuery = null);
-    }
+    _updateMentionState(text, sel.isCollapsed ? sel.baseOffset : -1);
   }
 
-  /// Ищем активный `#query` слева от курсора (без пробелов/переносов).
+  /// Пересчитывает, активен ли сейчас mention-попап (после «#») и что
+  /// в нём набрано, по актуальному тексту/позиции курсора.
   void _updateMentionState(String text, int cursor) {
-    if (cursor < 0 || cursor > text.length) {
-      if (_mentionQuery != null) setState(() => _mentionQuery = null);
+    if (cursor < 0) {
+      if (_mentionStart != null) setState(() => _mentionStart = null);
       return;
     }
-    var i = cursor - 1;
-    while (i >= 0) {
-      final ch = text[i];
-      if (ch == '#') break;
-      if (ch == ' ' || ch == '\n' || ch == '\t' || ch == '•') {
-        i = -1;
-        break;
-      }
-      i--;
+    var start = _mentionStart;
+
+    // Начали новый mention: только что напечатали «#» в начале строки
+    // или после пробела/переноса — не посреди слова вроде «C#».
+    if (start == null &&
+        cursor > 0 &&
+        cursor <= text.length &&
+        text[cursor - 1] == '#' &&
+        (cursor == 1 || _isBreak(text[cursor - 2]))) {
+      start = cursor - 1;
     }
-    if (i < 0 || text[i] != '#') {
-      if (_mentionQuery != null) setState(() => _mentionQuery = null);
+
+    if (start == null) {
+      if (_mentionStart != null) setState(() => _mentionStart = null);
       return;
     }
-    final token = text.substring(i, cursor);
-    // Уже завершённый `#n1234` — пикер не нужен.
-    if (_mentionRe.hasMatch(token) && token.length >= 6) {
-      if (_mentionQuery != null) setState(() => _mentionQuery = null);
+
+    // Проверяем, что «#» ещё на месте и курсор не убежал перед ним.
+    if (start >= text.length || text[start] != '#' || cursor <= start) {
+      if (_mentionStart != null) setState(() => _mentionStart = null);
       return;
     }
-    final query = token.substring(1);
+
+    final query = text.substring(start + 1, cursor);
+    if (query.contains(' ') || query.contains('\n')) {
+      if (_mentionStart != null) setState(() => _mentionStart = null);
+      return;
+    }
+
     setState(() {
-      _mentionStart = i;
+      _mentionStart = start;
       _mentionQuery = query;
     });
   }
 
-  List<BugItem> _filteredBugs() {
-    final q = (_mentionQuery ?? '').toLowerCase();
-    final all = AppState.I.bugs;
-    if (q.isEmpty) return all.take(8).toList();
-    return all
-        .where((b) {
-          final id = b.id.toLowerCase();
-          final title = b.title.toLowerCase();
-          final short = id.length >= 4 ? id.substring(id.length - 4) : id;
-          return id.contains(q) ||
-              short.contains(q) ||
-              title.contains(q) ||
-              '#$id'.contains(q) ||
-              '#$short'.contains(q);
-        })
-        .take(8)
-        .toList();
-  }
-
-  void _insertMention(BugItem bug) {
+  void _selectBug(BugItem bug) {
+    final start = _mentionStart;
+    if (start == null) return;
     final text = _ctrl.text;
-    final cursor = _ctrl.selection.baseOffset.clamp(0, text.length);
-    if (_mentionStart < 0 || _mentionStart > cursor) return;
-    final mention = '#${bug.id}';
+    final cursor = _ctrl.selection.baseOffset;
+    final safeCursor = cursor < 0 ? text.length : cursor;
+    final token = '#${bug.id} ';
     final newText =
-        '${text.substring(0, _mentionStart)}$mention ${text.substring(cursor)}';
-    final newCursor = _mentionStart + mention.length + 1;
+        text.substring(0, start) + token + text.substring(safeCursor);
     _guard = true;
     _ctrl.value = TextEditingValue(
       text: newText,
-      selection: TextSelection.collapsed(offset: newCursor),
+      selection: TextSelection.collapsed(offset: start + token.length),
     );
     _prevText = newText;
     _guard = false;
-    HapticFeedback.selectionClick();
-    setState(() => _mentionQuery = null);
-  }
-
-
-  List<BugItem> _mentionedBugs() {
-    final ids = _MentionController._re
-        .allMatches(_ctrl.text)
-        .map((m) => m.group(0)!.substring(1))
-        .toSet();
-    if (ids.isEmpty) return const [];
-    final byId = {for (final b in AppState.I.bugs) b.id: b};
-    return [
-      for (final id in ids)
-        if (byId.containsKey(id)) byId[id]!,
-    ];
-  }
-
-  void _removeMention(BugItem bug) {
-    final token = '#${bug.id}';
-    var text = _ctrl.text;
-    // Удаляем все вхождения токена (с возможным пробелом после).
-    text = text.replaceAll('$token ', '');
-    text = text.replaceAll(token, '');
-    _guard = true;
-    final cursor = _ctrl.selection.baseOffset.clamp(0, text.length);
-    _ctrl.value = TextEditingValue(
-      text: text,
-      selection: TextSelection.collapsed(offset: cursor.clamp(0, text.length)),
-    );
-    _prevText = text;
-    _guard = false;
-    setState(() {});
-  }
-
-  void _saveAndClose() {
-    final t = _ctrl.text;
-    AppState.I.changelog = (t == _bullet || t.trim().isEmpty) ? '' : t;
-    Navigator.of(context).maybePop();
+    setState(() {
+      _mentionStart = null;
+      _mentionQuery = '';
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final pal = context.pal;
-    final mq = MediaQuery.of(context);
-    final top = mq.padding.top;
-    final bottomSafe = mq.padding.bottom;
-    final bugs = _mentionQuery != null ? _filteredBugs() : const <BugItem>[];
-    final mentioned = _mentionedBugs();
-    // Доп. место под ряд плашек упомянутых багов.
-    final topPad = top + 56.0 + (mentioned.isNotEmpty && _mentionQuery == null ? 36.0 : 0.0);
+    final top = MediaQuery.of(context).padding.top;
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final mentionOpen = _mentionStart != null;
 
-    // Текст занимает ВЕСЬ экран. Никаких цветных «плашек» сверху/снизу —
-    // только прозрачный Stack. contentPadding даёт отступ под кнопки;
-    // при скролле текст уходит под них (шапка визуально прозрачная).
     return Scaffold(
       backgroundColor: pal.bg,
       resizeToAvoidBottomInset: true,
+      // Никакой AppBar/шапки — текст начинается прямо под системной
+      // статус-баром, экран прозрачный и «безграничный».
       body: Stack(
         children: [
           Positioned.fill(
-            child: TextField(
-              controller: _ctrl,
-              focusNode: _focus,
-              autofocus: true,
-              maxLines: null,
-              expands: true,
-              textAlignVertical: TextAlignVertical.top,
-              keyboardType: TextInputType.multiline,
-              textInputAction: TextInputAction.newline,
-              cursorColor: AppColors.accent,
-              style: TextStyle(
-                fontSize: 16,
-                height: 1.5,
-                color: pal.text,
-              ),
-              scrollPadding: EdgeInsets.fromLTRB(20, topPad, 20, 24),
-              decoration: InputDecoration(
-                border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                disabledBorder: InputBorder.none,
-                errorBorder: InputBorder.none,
-                focusedErrorBorder: InputBorder.none,
-                filled: false,
-                fillColor: Colors.transparent,
-                hoverColor: Colors.transparent,
-                focusColor: Colors.transparent,
-                hintText: 'Что изменилось в этой сборке…\n# — упомянуть баг',
-                hintStyle: TextStyle(
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(20, top + 64, 20, 24),
+              child: TextField(
+                controller: _ctrl,
+                focusNode: _focus,
+                autofocus: true,
+                maxLines: null,
+                expands: true,
+                textAlignVertical: TextAlignVertical.top,
+                keyboardType: TextInputType.multiline,
+                cursorColor: AppColors.accent,
+                // Без этого Android иногда решает, что это поле для логина
+                // или заметки с чувствительными данными, и подключает
+                // менеджер паролей / автозаполнение — на некоторых
+                // прошивках (Flyme/MIUI) это приводило к тому, что в поле
+                // раз за разом подставлялся сохранённый текст, забивая
+                // экран повторяющейся тарабарщиной. Явно говорим системе
+                // не трогать это поле автозаполнением.
+                autofillHints: const [],
+                enableIMEPersonalizedLearning: false,
+                style: TextStyle(
                   fontSize: 16,
                   height: 1.5,
-                  color: pal.sub,
+                  color: pal.text,
                 ),
-                contentPadding: EdgeInsets.fromLTRB(
-                  20,
-                  topPad,
-                  20,
-                  math.max(24.0, bottomSafe + 12),
+                decoration: InputDecoration(
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  filled: false,
+                  hintText: 'Что изменилось в этой сборке… «#» — упомянуть баг',
+                  hintStyle: TextStyle(
+                    fontSize: 16,
+                    height: 1.5,
+                    color: pal.sub,
+                  ),
+                  contentPadding: EdgeInsets.zero,
+                  isCollapsed: true,
                 ),
-                isCollapsed: false,
               ),
             ),
           ),
-
-          // Прозрачная верхняя зона: только кнопки, без фона-плашки.
           Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: SafeArea(
-              bottom: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
-                child: Row(
-                  children: [
-                    _GlassIconBtn(
-                      icon: 'solar:alt-arrow-left-linear',
-                      onTap: _saveAndClose,
-                    ),
-                    const Spacer(),
-                    _GlassIconBtn(
-                      icon: 'solar:check-circle-bold',
-                      color: AppColors.accent,
-                      onTap: _saveAndClose,
-                    ),
-                  ],
-                ),
-              ),
+            top: top + 10,
+            left: 12,
+            child: _IslandBtn(
+              icon: 'solar:alt-arrow-left-linear',
+              onTap: () => Navigator.of(context).maybePop(),
             ),
           ),
-
-          // Плашки упомянутых багов — скруглённые, с названием и ellipsis.
-          if (_mentionedBugs().isNotEmpty && _mentionQuery == null)
+          Positioned(
+            top: top + 10,
+            right: 12,
+            child: _IslandBtn(
+              icon: 'solar:check-circle-bold',
+              iconColor: AppColors.accent,
+              onTap: () => Navigator.of(context).maybePop(),
+            ),
+          ),
+          if (mentionOpen)
             Positioned(
-              top: top + 52,
               left: 16,
               right: 16,
-              child: _MentionedChipsBar(
-                bugs: _mentionedBugs(),
-                onRemove: _removeMention,
-              ),
-            ),
-
-          // Пикер упоминаний — над клавиатурой, без «полоски»-разделителя.
-          if (_mentionQuery != null)
-            Positioned(
-              left: 12,
-              right: 12,
-              bottom: 8,
-              child: _MentionPicker(
-                bugs: bugs,
-                query: _mentionQuery!,
-                onSelect: _insertMention,
-                onDismiss: () => setState(() => _mentionQuery = null),
+              bottom: bottomInset + 12,
+              child: _MentionPopup(
+                query: _mentionQuery,
+                onPick: _selectBug,
               ),
             ),
         ],
@@ -327,13 +254,44 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
   }
 }
 
-/// Контроллер: `#n1234` рисуется акцентным «чипом» (фон + жирный).
-/// WidgetSpan в EditableText не поддержан, поэтому длина токена в
-/// value.text и в span совпадает — курсор не уезжает.
+/// Кнопка-«островок»: сама шапка экрана прозрачная (никакого фонового
+/// бара), но кнопки назад/готово сидят каждая на своём скруглённом
+/// «островке» — тот же приём, что и в `bug_draw.dart` (`_Island` +
+/// `_CircleBtn`), только локально для этого экрана.
+class _IslandBtn extends StatelessWidget {
+  final String icon;
+  final Color? iconColor;
+  final VoidCallback onTap;
+  const _IslandBtn({required this.icon, required this.onTap, this.iconColor});
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = context.pal;
+    return Material(
+      color: pal.cont,
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      elevation: 0,
+      child: InkWell(
+        onTap: onTap,
+        child: SizedBox(
+          width: 40,
+          height: 40,
+          child: Center(
+            child: Iconify(icon, size: 22, color: iconColor ?? pal.text),
+          ),
+        ),
+      ),
+    );
+  }
+}
+/// текста как скруглённые плашки бага (миниатюра + название), а не как
+/// сырой текст. Сам текст поля при этом остаётся обычной строкой — токен
+/// хранится как есть, меняется только то, как он рисуется.
 class _MentionController extends TextEditingController {
   _MentionController({super.text});
 
-  static final _re = RegExp(r'#n\d{4}');
+  static final _re = RegExp(r'#(n\d{4})');
 
   @override
   TextSpan buildTextSpan({
@@ -341,205 +299,185 @@ class _MentionController extends TextEditingController {
     TextStyle? style,
     required bool withComposing,
   }) {
-    final text = value.text;
-    if (!_re.hasMatch(text)) {
-      return TextSpan(style: style, text: text);
-    }
-    final spans = <InlineSpan>[];
+    final src = text;
+    final children = <InlineSpan>[];
     var last = 0;
-    for (final m in _re.allMatches(text)) {
+    for (final m in _re.allMatches(src)) {
       if (m.start > last) {
-        spans.add(TextSpan(style: style, text: text.substring(last, m.start)));
+        children.add(TextSpan(text: src.substring(last, m.start), style: style));
       }
-      final token = m.group(0)!;
-      spans.add(TextSpan(
-        text: token,
-        style: (style ?? const TextStyle()).copyWith(
-          color: AppColors.accent,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.15,
-          background: Paint()
-            ..color = AppColors.accent.withValues(alpha: 0.18),
-        ),
-      ));
+      final id = m.group(1)!;
+      BugItem? bug;
+      for (final b in AppState.I.bugs) {
+        if (b.id == id) {
+          bug = b;
+          break;
+        }
+      }
+      if (bug == null) {
+        // Баг мог быть удалён — не теряем текст, просто не рисуем плашку.
+        children.add(TextSpan(text: m.group(0), style: style));
+      } else {
+        children.add(WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: _BugPill(bug: bug),
+        ));
+      }
       last = m.end;
     }
-    if (last < text.length) {
-      spans.add(TextSpan(style: style, text: text.substring(last)));
+    if (last < src.length) {
+      children.add(TextSpan(text: src.substring(last), style: style));
     }
-    return TextSpan(style: style, children: spans);
+    return TextSpan(style: style, children: children);
   }
 }
 
-/// Полупрозрачная круглая кнопка — текст под ней читается.
-class _GlassIconBtn extends StatelessWidget {
-  final String icon;
-  final VoidCallback onTap;
-  final Color? color;
-  const _GlassIconBtn({
-    required this.icon,
-    required this.onTap,
-    this.color,
-  });
+/// Скруглённая плашка с миниатюрой и названием бага, вставляемая в текст
+/// вместо токена «#n1234». Тап открывает баг-репорт.
+class _BugPill extends StatelessWidget {
+  final BugItem bug;
+  const _BugPill({required this.bug});
 
   @override
   Widget build(BuildContext context) {
     final pal = context.pal;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        customBorder: const CircleBorder(),
-        child: Container(
-          width: 40,
-          height: 40,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: pal.bg.withValues(alpha: 0.55),
-          ),
-          child: Iconify(icon, size: 22, color: color ?? pal.text),
+    final title = bug.title.trim().isEmpty ? 'Без названия' : bug.title.trim();
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => pushSlide(context, BugDetailScreen(id: bug.id)),
+      child: Container(
+        padding: const EdgeInsets.only(left: 3, right: 9, top: 2, bottom: 2),
+        decoration: BoxDecoration(
+          color: pal.cont,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: bug.shots.isNotEmpty
+                  ? Image(
+                      image: bug.imageProvider(0),
+                      width: 20,
+                      height: 20,
+                      fit: BoxFit.cover,
+                    )
+                  : Container(
+                      width: 20,
+                      height: 20,
+                      color: bugThumbColor(bug),
+                      alignment: Alignment.center,
+                      child: const Iconify('solar:bug-bold',
+                          size: 12, color: Colors.white),
+                    ),
+            ),
+            const SizedBox(width: 5),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 130),
+              child: Text(
+                title,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  height: 1,
+                  color: pal.text,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-/// Компактный список багов над клавиатурой.
-class _MentionPicker extends StatelessWidget {
-  final List<BugItem> bugs;
+/// Небольшая прокручиваемая панель со списком баг-репортов, которая
+/// всплывает над клавиатурой при вводе «#». Печатая дальше, список
+/// фильтруется по вхождению в название.
+class _MentionPopup extends StatelessWidget {
   final String query;
-  final ValueChanged<BugItem> onSelect;
-  final VoidCallback onDismiss;
-  const _MentionPicker({
-    required this.bugs,
-    required this.query,
-    required this.onSelect,
-    required this.onDismiss,
-  });
+  final void Function(BugItem) onPick;
+  const _MentionPopup({required this.query, required this.onPick});
 
   @override
   Widget build(BuildContext context) {
     final pal = context.pal;
+    final q = query.trim().toLowerCase();
+    final all = AppState.I.bugs.reversed.toList(); // новые сверху
+    final filtered = q.isEmpty
+        ? all
+        : all.where((b) => b.title.toLowerCase().contains(q)).toList();
+
     return Material(
       color: Colors.transparent,
-      elevation: 0,
       child: Container(
-        constraints: const BoxConstraints(maxHeight: 220),
+        constraints: const BoxConstraints(maxHeight: 260),
         decoration: BoxDecoration(
           color: pal.cont,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(18),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: pal.isDark ? 0.45 : 0.12),
-              blurRadius: 24,
-              offset: const Offset(0, 8),
+              color: Colors.black.withValues(alpha: 0.25),
+              blurRadius: 20,
+              offset: const Offset(0, 6),
             ),
           ],
         ),
-        clipBehavior: Clip.antiAlias,
-        child: bugs.isEmpty
+        child: filtered.isEmpty
             ? Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                child: Row(
-                  children: [
-                    Iconify('solar:bug-bold', size: 16, color: pal.sub),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        query.isEmpty
-                            ? 'Нет багов для упоминания'
-                            : 'Ничего не найдено по «#$query»',
-                        style: TextStyle(color: pal.sub, fontSize: 13),
-                      ),
-                    ),
-                    GestureDetector(
-                      onTap: onDismiss,
-                      child: Iconify('solar:close-circle-linear',
-                          size: 18, color: pal.sub),
-                    ),
-                  ],
+                padding: const EdgeInsets.symmetric(vertical: 22, horizontal: 16),
+                child: Text(
+                  all.isEmpty ? 'Пока нет ни одного бага' : 'Ничего не найдено',
+                  style: TextStyle(fontSize: 13, color: pal.sub),
                 ),
               )
-            : ListView.separated(
-                shrinkWrap: true,
+            : ListView.builder(
                 padding: const EdgeInsets.symmetric(vertical: 6),
-                itemCount: bugs.length,
-                separatorBuilder: (_, __) => Divider(
-                  height: 1,
-                  thickness: 1,
-                  color: pal.sep,
-                  indent: 44,
-                ),
-                itemBuilder: (_, i) {
-                  final b = bugs[i];
+                shrinkWrap: true,
+                itemCount: filtered.length,
+                itemBuilder: (context, i) {
+                  final bug = filtered[i];
                   final title =
-                      b.title.trim().isEmpty ? 'Без названия' : b.title.trim();
-                  final short = b.id.length >= 4
-                      ? b.id.substring(b.id.length - 4)
-                      : b.id;
+                      bug.title.trim().isEmpty ? 'Без названия' : bug.title.trim();
                   return InkWell(
-                    onTap: () => onSelect(b),
+                    onTap: () => onPick(bug),
                     child: Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                       child: Row(
                         children: [
-                          Container(
-                            width: 28,
-                            height: 28,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: AppColors.accent.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Iconify('solar:bug-bold',
-                                size: 15, color: AppColors.accent),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(9),
+                            child: bug.shots.isNotEmpty
+                                ? Image(
+                                    image: bug.imageProvider(0),
+                                    width: 32,
+                                    height: 32,
+                                    fit: BoxFit.cover,
+                                  )
+                                : Container(
+                                    width: 32,
+                                    height: 32,
+                                    color: bugThumbColor(bug),
+                                    alignment: Alignment.center,
+                                    child: const Iconify('solar:bug-bold',
+                                        size: 16, color: Colors.white),
+                                  ),
                           ),
                           const SizedBox(width: 10),
                           Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: pal.text,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  '#$short',
-                                  style: TextStyle(
-                                    color: pal.sub,
-                                    fontSize: 11.5,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          // Превью плашки с названием (ellipsis).
-                          Container(
-                            constraints: const BoxConstraints(maxWidth: 110),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: AppColors.accent.withValues(alpha: 0.16),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
                             child: Text(
                               title,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: AppColors.accent,
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w700,
+                                fontSize: 14,
+                                color: pal.text,
+                                fontWeight: FontWeight.w500,
                               ),
                             ),
                           ),
@@ -549,77 +487,6 @@ class _MentionPicker extends StatelessWidget {
                   );
                 },
               ),
-      ),
-    );
-  }
-}
-
-/// Горизонтальный ряд плашек уже упомянутых в тексте багов.
-class _MentionedChipsBar extends StatelessWidget {
-  final List<BugItem> bugs;
-  final ValueChanged<BugItem> onRemove;
-  const _MentionedChipsBar({required this.bugs, required this.onRemove});
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          for (final b in bugs) ...[
-            _BugChip(bug: b, onRemove: () => onRemove(b)),
-            const SizedBox(width: 6),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _BugChip extends StatelessWidget {
-  final BugItem bug;
-  final VoidCallback onRemove;
-  const _BugChip({required this.bug, required this.onRemove});
-
-  @override
-  Widget build(BuildContext context) {
-    final title = bug.title.trim().isEmpty ? '#${bug.id}' : bug.title.trim();
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 160),
-      padding: const EdgeInsets.fromLTRB(10, 5, 6, 5),
-      decoration: BoxDecoration(
-        color: AppColors.accent.withValues(alpha: 0.16),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Flexible(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: AppColors.accent,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          const SizedBox(width: 4),
-          GestureDetector(
-            onTap: onRemove,
-            behavior: HitTestBehavior.opaque,
-            child: Padding(
-              padding: const EdgeInsets.all(2),
-              child: Iconify(
-                'solar:close-circle-bold',
-                size: 14,
-                color: AppColors.accent.withValues(alpha: 0.85),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

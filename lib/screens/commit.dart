@@ -57,26 +57,10 @@ class _CommitScreenState extends State<CommitScreen> {
     final api = AppState.I.api;
     final repo = AppState.I.activeRepo;
     final files = AppState.I.stagedFiles;
-    final title = _ctrl.text.trim();
+    final msg = _ctrl.text.trim();
     if (api == null || repo == null) return;
     if (files.isEmpty) return;
-    if (title.isEmpty) return;
-    // Список изменений дописывается в тело commit-message, чтобы он
-    // был виден в GitHub Actions / run detail (head_commit.message).
-    // Раньше changelog жил только локально и сразу очищался — в
-    // открытой сборке его не было видно.
-    final changelogRaw = AppState.I.changelog.trim();
-    final changelogBody = changelogRaw
-        .split('\n')
-        .map((l) => l.trimRight())
-        .where((l) {
-          final t = l.replaceAll('•', '').trim();
-          return t.isNotEmpty;
-        })
-        .join('\n');
-    final msg = changelogBody.isEmpty
-        ? title
-        : '$title\n\n$changelogBody';
+    if (msg.isEmpty) return;
     // Уже идёт активная заливка — второй пуш не запускаем. Кнопка в
     // этом случае дизейблится в `_NewRepoCard`/`_UploadCard` через
     // AppState.activeUpload.status, но подстраховываемся ещё и здесь.
@@ -84,6 +68,15 @@ class _CommitScreenState extends State<CommitScreen> {
       return;
     }
     setState(() => _busy = true);
+
+    // «Список изменений» уезжает в тело коммита (subject + пустая строка +
+    // список), как это делает `git commit -m subject -m body`. Именно тело
+    // коммита GitHub возвращает в `head_commit.message`, которое
+    // run_detail.dart показывает на экране рана — так список реально
+    // становится виден «в открытой сборке», а не лежит только локально.
+    final changelogBody = AppState.I.changelog.trim();
+    final fullMessage =
+        changelogBody.isEmpty ? msg : '$msg\n\n$changelogBody';
 
     // Стартуем фоновую задачу. На этой задаче подписаны:
     // - карточка «Залить файлы» на профиле (рисует progress-бар);
@@ -126,7 +119,7 @@ class _CommitScreenState extends State<CommitScreen> {
             fullName: repo.fullName,
             branch: repo.defaultBranch,
             files: filesSnapshot,
-            message: msg,
+            message: fullMessage,
             onProgress: (s, p) => task.update(s, p),
           );
           task.finishSuccess(
