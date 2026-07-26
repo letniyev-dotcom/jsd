@@ -61,6 +61,14 @@ class _CommitScreenState extends State<CommitScreen> {
     if (api == null || repo == null) return;
     if (files.isEmpty) return;
     if (msg.isEmpty) return;
+    // Список изменений уходит в тело коммита (после пустой строки за
+    // заголовком) — тогда GitHub Actions отдаёт его в head_commit.message
+    // и он становится виден в деталях сборки (см. run_detail.dart). Раньше
+    // changelog нигде не отправлялся и просто терялся при пуше.
+    final changelogText =
+        expandChangelogText(AppState.I.changelog, AppState.I.changelogMentions)
+            .trim();
+    final fullMessage = changelogText.isEmpty ? msg : '$msg\n\n$changelogText';
     // Уже идёт активная заливка — второй пуш не запускаем. Кнопка в
     // этом случае дизейблится в `_NewRepoCard`/`_UploadCard` через
     // AppState.activeUpload.status, но подстраховываемся ещё и здесь.
@@ -68,15 +76,6 @@ class _CommitScreenState extends State<CommitScreen> {
       return;
     }
     setState(() => _busy = true);
-
-    // «Список изменений» уезжает в тело коммита (subject + пустая строка +
-    // список), как это делает `git commit -m subject -m body`. Именно тело
-    // коммита GitHub возвращает в `head_commit.message`, которое
-    // run_detail.dart показывает на экране рана — так список реально
-    // становится виден «в открытой сборке», а не лежит только локально.
-    final changelogBody = AppState.I.changelog.trim();
-    final fullMessage =
-        changelogBody.isEmpty ? msg : '$msg\n\n$changelogBody';
 
     // Стартуем фоновую задачу. На этой задаче подписаны:
     // - карточка «Залить файлы» на профиле (рисует progress-бар);
@@ -93,6 +92,7 @@ class _CommitScreenState extends State<CommitScreen> {
     AppState.I.stagedZipName = '';
     AppState.I.commitMessage = '';
     AppState.I.changelog = '';
+    AppState.I.changelogMentions = [];
     AppState.I.touch();
 
     // Стрим прогресса. unawaited — задача живёт в фоне. pushFiles теперь
@@ -164,7 +164,9 @@ class _CommitScreenState extends State<CommitScreen> {
   }
 
   String _changelogPreview() {
-    final raw = AppState.I.changelog.replaceAll('•', '').trim();
+    final expanded =
+        expandChangelogText(AppState.I.changelog, AppState.I.changelogMentions);
+    final raw = expanded.replaceAll('•', '').trim();
     if (raw.isEmpty) return 'Не заполнен';
     final oneLine = raw.replaceAll('\n', ' · ').trim();
     return oneLine.length > 46 ? '${oneLine.substring(0, 46)}…' : oneLine;

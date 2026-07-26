@@ -12,6 +12,74 @@ import '../widgets/common.dart';
 import 'actions.dart';
 import 'actions_archive.dart';
 
+/// Разбивает полный текст коммита (как его возвращает GitHub в
+/// head_commit.message) на заголовок и тело — по гит-конвенции: первая
+/// строка — заголовок, дальше через пустую строку — тело. Список
+/// изменений (см. commit.dart/changelog.dart) при пуше кладётся именно
+/// туда, поэтому здесь он снова становится виден.
+List<String> _splitCommitMessage(String raw) {
+  final idx = raw.indexOf('\n');
+  if (idx == -1) return [raw.trim(), ''];
+  final title = raw.substring(0, idx).trim();
+  var rest = raw.substring(idx + 1);
+  if (rest.startsWith('\n')) rest = rest.substring(1);
+  return [title, rest.trim()];
+}
+
+String _commitTitle(String raw) => _splitCommitMessage(raw)[0];
+String _commitChangelog(String raw) => _splitCommitMessage(raw)[1];
+
+/// Карточка со списком изменений сборки — тело коммита, построчно, с
+/// маркерами. Раньше этот текст вообще нигде не показывался (терялся
+/// при пуше — баг), теперь — полноценная секция под шапкой рана.
+class _ChangelogCard extends StatelessWidget {
+  final String text;
+  const _ChangelogCard({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = context.pal;
+    final lines = text
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty)
+        .toList();
+    if (lines.isEmpty) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: pal.cont,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Iconify('solar:clipboard-add-bold', size: 14, color: pal.sub),
+            const SizedBox(width: 6),
+            Text('Список изменений',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: pal.sub)),
+          ]),
+          const SizedBox(height: 8),
+          for (final line in lines)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                line.startsWith('•') ? line : '•  $line',
+                style:
+                    TextStyle(fontSize: 13, color: pal.text, height: 1.4),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Экран детальной информации о ране — баг n3324: «сделай дизайн как в HTML».
 /// Раньше тут был тонкий список Tile'ов. Теперь:
 ///   • шапка с кнопками Перезапустить / Открыть на GitHub / Скачать APK
@@ -350,11 +418,15 @@ class _RunHero extends StatelessWidget {
           if (run.headCommit.isNotEmpty) ...[
             const SizedBox(height: 12),
             Text(
-              run.headCommit,
+              _commitTitle(run.headCommit),
               style: TextStyle(fontSize: 13, color: pal.text, height: 1.35),
-              maxLines: 3,
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
+          ],
+          if (_commitChangelog(run.headCommit).isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _ChangelogCard(text: _commitChangelog(run.headCommit)),
           ],
           const SizedBox(height: 12),
           Row(children: [
